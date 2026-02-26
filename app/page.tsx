@@ -22,7 +22,11 @@ export default async function HomePage() {
     .limit(10)
     .lean();
 
-  const recentMatches = await Match.find({ status: 'completed' })
+  const recentMatches = await Match.find({
+    status: 'completed',
+    agent1Name: { $ne: 'RANDOM' },
+    agent2Name: { $ne: 'RANDOM' },
+  })
     .select('agent1Name agent2Name agent1Score agent2Score winner createdAt')
     .sort({ createdAt: -1 })
     .limit(5)
