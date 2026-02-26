@@ -99,6 +99,19 @@ export async function runTournament() {
     );
     matchIds.push(match._id);
 
+    // Feed item for agent-vs-agent matches (skip self-play)
+    if (a1._id.toString() !== a2._id.toString()) {
+      const resultText = match.winner
+        ? `${match.winner} defeated ${match.winner === a1.name ? a2.name : a1.name}`
+        : `${a1.name} drew with ${a2.name}`;
+      await FeedItem.create({
+        type: 'match_completed',
+        content: `${resultText} (${match.agent1Score}-${match.agent2Score})`,
+        relatedAgentIds: [a1._id, a2._id],
+        relatedMatchId: match._id,
+      });
+    }
+
     const a1Id = a1._id.toString();
     const a2Id = a2._id.toString();
     agentScores[a1Id].score += match.agent1Score;

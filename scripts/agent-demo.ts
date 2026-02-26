@@ -106,20 +106,42 @@ async function discover(agentName: string): Promise<void> {
 
 // ─── Phase 2: Register ──────────────────────────────────
 
-async function register(agentName: string): Promise<{ apiKey: string; claimToken: string }> {
-  log(agentName, 'REGISTER', `Registering as "${agentName}"...`);
+async function register(agentName: string): Promise<{ apiKey: string; claimToken: string; actualName: string }> {
+  const MAX_RETRIES = 3;
 
-  const data = await apiCall('POST', '/api/agents/register', {
-    name: agentName,
-    description: `Autonomous demo agent competing in the Prisoner's Dilemma tournament.`,
-  });
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    const tryName = attempt === 0 ? agentName : `${agentName}_${Math.floor(Math.random() * 900) + 100}`;
+    log(tryName, 'REGISTER', `Registering as "${tryName}"...`);
 
-  const apiKey = data.agent.api_key;
-  // Extract claim token from claim_url
-  const claimToken = data.agent.claim_url.split('/claim/')[1];
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const res = await fetch(`${BASE_URL}/api/agents/register`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        name: tryName,
+        description: `Autonomous demo agent competing in the Prisoner's Dilemma tournament.`,
+      }),
+    });
 
-  log(agentName, 'REGISTER', `Registered! API key: ${apiKey.substring(0, 10)}...`);
-  return { apiKey, claimToken };
+    const json = await res.json();
+
+    if (!json.success && res.status === 409 && attempt < MAX_RETRIES) {
+      log(agentName, 'REGISTER', `Name "${tryName}" taken, retrying with suffix...`);
+      continue;
+    }
+
+    if (!json.success) {
+      throw new Error(`Registration failed: ${json.error} — ${json.hint || ''}`);
+    }
+
+    const apiKey = json.data.agent.api_key;
+    const claimToken = json.data.agent.claim_url.split('/claim/')[1];
+
+    log(tryName, 'REGISTER', `Registered! API key: ${apiKey.substring(0, 10)}...`);
+    return { apiKey, claimToken, actualName: tryName };
+  }
+
+  throw new Error(`Failed to register after ${MAX_RETRIES} retries — all names taken`);
 }
 
 // ─── Phase 3: Claim ──────────────────────────────────────
@@ -219,22 +241,22 @@ async function main() {
   // Phase 1: Discovery
   await discover(name);
 
-  // Phase 2: Register
-  const { apiKey, claimToken } = await register(name);
+  // Phase 2: Register (handles 409 name collisions with suffix)
+  const { apiKey, claimToken, actualName } = await register(name);
 
   // Phase 3: Claim
-  await claim(name, claimToken);
+  await claim(actualName, claimToken);
 
   // Phase 4: Set initial strategy (triggers tournament)
   let currentStrategy = strategy;
-  await setStrategy(name, apiKey, currentStrategy);
+  await setStrategy(actualName, apiKey, currentStrategy);
 
   // Wait a moment for tournament to fully complete
-  log(name, 'WAIT', 'Waiting for tournament results to propagate...');
+  log(actualName, 'WAIT', 'Waiting for tournament results to propagate...');
   await new Promise(r => setTimeout(r, 2000));
 
   // Phase 5: Check results
-  let results = await checkResults(name, apiKey);
+  let results = await checkResults(actualName, apiKey);
 
   // Phase 6: Refinement loop
   let refinements = 0;
@@ -243,29 +265,29 @@ async function main() {
     const nextStrategy = getNextStrategy(currentStrategy);
 
     if (!nextStrategy) {
-      log(name, 'REFINE', `No more strategies to try. Staying with "${currentStrategy}".`);
+      log(actualName, 'REFINE', `No more strategies to try. Staying with "${currentStrategy}".`);
       break;
     }
 
     console.log('');
-    log(name, 'REFINE', `--- Refinement ${refinements}/${MAX_REFINEMENTS} ---`);
-    log(name, 'REFINE', `Currently rank #${results.rank}. Switching from "${currentStrategy}" to "${nextStrategy}"...`);
+    log(actualName, 'REFINE', `--- Refinement ${refinements}/${MAX_REFINEMENTS} ---`);
+    log(actualName, 'REFINE', `Currently rank #${results.rank}. Switching from "${currentStrategy}" to "${nextStrategy}"...`);
 
     currentStrategy = nextStrategy;
-    await setStrategy(name, apiKey, currentStrategy);
+    await setStrategy(actualName, apiKey, currentStrategy);
 
-    log(name, 'WAIT', 'Waiting for tournament results...');
+    log(actualName, 'WAIT', 'Waiting for tournament results...');
     await new Promise(r => setTimeout(r, 2000));
 
-    results = await checkResults(name, apiKey);
+    results = await checkResults(actualName, apiKey);
   }
 
   // Final summary
   console.log('');
   console.log('='.repeat(60));
-  log(name, 'DONE', `Final rank: #${results.rank}/${results.totalAgents}`);
-  log(name, 'DONE', `Final strategy: ${currentStrategy}`);
-  log(name, 'DONE', `Total score: ${results.totalScore} | Matches: ${results.matchesPlayed} | W/L: ${results.wins}/${results.losses}`);
+  log(actualName, 'DONE', `Final rank: #${results.rank}/${results.totalAgents}`);
+  log(actualName, 'DONE', `Final strategy: ${currentStrategy}`);
+  log(actualName, 'DONE', `Total score: ${results.totalScore} | Matches: ${results.matchesPlayed} | W/L: ${results.wins}/${results.losses}`);
   console.log('='.repeat(60));
   console.log('');
 }
